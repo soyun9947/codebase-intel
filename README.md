@@ -10,6 +10,7 @@
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11+-blue.svg?style=flat-square" alt="Python 3.11+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-purple.svg?style=flat-square" alt="MCP"></a>
   <a href="#19-languages"><img src="https://img.shields.io/badge/languages-19-orange.svg?style=flat-square" alt="19 Languages"></a>
+  <a href="https://pypi.org/project/codebase-intel/"><img src="https://img.shields.io/pypi/v/codebase-intel?style=flat-square" alt="PyPI"></a>
 </p>
 
 ---
@@ -89,7 +90,12 @@ Code → Graph → Agent        Code → Graph ───────────
 ## Quick Start
 
 ```bash
-pip install codebase-intel
+# Install globally (no venv needed)
+uvx codebase-intel --help          # ephemeral, like npx
+# or
+pipx install codebase-intel        # persistent global install
+# or
+pip install codebase-intel         # traditional
 
 # Initialize on your project
 cd your-project
@@ -101,6 +107,9 @@ codebase-intel status
 # Mine decisions from git history
 codebase-intel mine --save
 
+# Auto-detect code patterns and generate quality contracts
+codebase-intel detect-patterns --save
+
 # Run benchmarks (see the before/after)
 codebase-intel benchmark
 
@@ -108,8 +117,9 @@ codebase-intel benchmark
 codebase-intel dashboard
 ```
 
-### Connect to Claude Code
+### Connect to Claude Code / any MCP client
 
+**Single project:**
 ```json
 {
   "mcpServers": {
@@ -120,6 +130,27 @@ codebase-intel dashboard
   }
 }
 ```
+
+**Multiple projects (global mode):**
+```bash
+# Register repos once from anywhere
+codebase-intel register ~/projects/user-service
+codebase-intel register /opt/services/payment-api
+codebase-intel register /var/repos/notification-service
+```
+
+```json
+{
+  "mcpServers": {
+    "codebase-intel": {
+      "command": "uvx",
+      "args": ["codebase-intel", "serve", "--auto"]
+    }
+  }
+}
+```
+
+In `--auto` mode, the MCP server automatically routes each request to the correct project based on file paths in the request. No manual switching — works like `npx @playwright/mcp`.
 
 Now your agent automatically gets relevant context, decisions, and contracts before writing code.
 
@@ -217,17 +248,30 @@ Full tree-sitter parsing via [tree-sitter-language-pack](https://github.com/nico
 ## CLI Commands
 
 ```bash
+# Core
 codebase-intel init [path]              # Initialize — build graph, create configs
 codebase-intel analyze [--incremental]  # Rebuild or update the code graph
 codebase-intel mine [--save]            # Mine git history for decision candidates
+codebase-intel detect-patterns [--save] # Auto-detect code patterns → quality contracts
 codebase-intel drift                    # Run drift detection
 codebase-intel benchmark                # Measure token efficiency (before/after)
 codebase-intel dashboard                # Live efficiency tracking over time
-codebase-intel serve                    # Start MCP server
+codebase-intel serve [path]             # Start MCP server (single project)
 codebase-intel status                   # Component health check
+codebase-intel intent [--verify]        # Track and verify delivery goals
+
+# Global workspace (multi-project)
+codebase-intel register <path>          # Register a project globally
+codebase-intel unregister <id>          # Remove from global registry
+codebase-intel projects                 # List all registered projects
+codebase-intel serve --auto             # Start MCP server for ALL registered projects
+
+# Cross-repo (microservices)
+codebase-intel crossrepo <paths...>     # Scan repos for cross-service dependencies
+codebase-intel crossrepo --all          # Scan all registered projects
 ```
 
-## MCP Tools (7 tools)
+## MCP Tools (12 tools)
 
 | Tool | What it does |
 |---|---|
@@ -238,6 +282,11 @@ codebase-intel status                   # Component health check
 | `check_drift` | Verify context freshness before trusting old decisions. |
 | `impact_analysis` | "What breaks if I change this file?" |
 | `get_status` | Health check — graph stats, decision count, contract count. |
+| `record_feedback` | Record if AI output was accepted/rejected — powers the learning loop. |
+| `get_efficiency_report` | Live token savings, acceptance rate, before/after proof. |
+| `set_intent` | Capture what the user wants with machine-verifiable acceptance criteria. |
+| `check_intent` | Verify if acceptance criteria are actually met before marking done. |
+| `list_intents` | Show all tracked intents with completion status. |
 
 ---
 
@@ -257,10 +306,60 @@ cp community-contracts/fastapi.yaml .codebase-intel/contracts/
 
 ---
 
+## New in v0.2.0
+
+### Global Workspace — One server, all your projects
+
+No more running a separate MCP server per project. Register your repos once, serve them all:
+
+```bash
+codebase-intel register ~/projects/user-service
+codebase-intel register /opt/services/payment-api
+codebase-intel serve --auto
+```
+
+The server auto-routes each request to the correct project based on file paths. LRU cache keeps the 5 most recently used projects loaded — older ones are evicted and reloaded on demand.
+
+### Intent Tracking — "Did you actually build what was requested?"
+
+AI agents say "done" when the code compiles. But did they actually deliver what was asked? Intent tracking captures goals with **machine-verifiable** acceptance criteria:
+
+```bash
+# Agent sets intent at task start (via MCP tool set_intent)
+# Agent works on the task...
+# Before marking done, agent calls check_intent
+# System runs automated checks: file_exists, function_exists, grep_match, test_passes...
+# Returns: 18/21 criteria met — 3 gaps identified
+```
+
+11 verification types: `file_exists`, `file_contains`, `function_exists`, `wired`, `cli_works`, `mcp_tool_exists`, `grep_match`, `grep_no_match`, `test_passes`, `custom`, `manual`.
+
+### Cross-Repo Awareness — Microservice dependency mapping
+
+Scans 14 web frameworks across 10 languages to find exposed endpoints and outbound HTTP calls. Maps which service depends on which endpoint:
+
+```bash
+codebase-intel crossrepo --all --impact user-service
+
+# Output:
+# CRITICAL: 3 services depend on /api/v1/users/{id}
+# → payment-service calls this endpoint [CRITICAL] at src/clients/user.py:42
+# → notification-service calls this endpoint at lib/api/users.ts:18
+```
+
+Supported: FastAPI, Express, Flask, Django, Spring Boot, Gin, Actix, Rails, Phoenix, Laravel, ASP.NET, Ktor, Vapor, Echo.
+
+### Feedback Loop — Learn from acceptance/rejection
+
+Records whether AI-generated code was accepted, modified, or rejected. Over time, identifies which context patterns lead to better output and which rejection reasons are most common.
+
 ## Architecture
 
 ```
-AI Agent (any) ──→ MCP Server (7 tools)
+AI Agent (any) ──→ MCP Server (12 tools)
+                        │
+                  Workspace Manager ←── Global Registry (~/.codebase-intel/)
+                  (multi-project routing, LRU cache)
                         │
                   Context Orchestrator
                   (token budgeting, priority, conflicts)
@@ -272,8 +371,13 @@ AI Agent (any) ──→ MCP Server (7 tools)
                     Drift Detector
                     (staleness, rot, orphans)
                           │
-                    Analytics Tracker
-                    (live efficiency metrics)
+               ┌──────────┼──────────┐
+         Analytics    Feedback    Intent
+         Tracker      Loop       Tracker
+               └──────────┼──────────┘
+                          │
+                   Cross-Repo Scanner
+                   (14 frameworks, 10 languages)
 ```
 
 ---
